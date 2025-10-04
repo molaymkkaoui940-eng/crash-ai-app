@@ -9,7 +9,12 @@ from sklearn.model_selection import train_test_split
 from datetime import datetime
 import joblib
 import os
-
+# كلمة مرور بسيطة لحماية التطبيق
+password = "1994"  # كلمة المرور الخاصة بك
+input_pass = st.text_input("🔒 أدخل كلمة المرور:", type="password")
+if input_pass != password:
+    st.error("كلمة المرور غير صحيحة ❌")
+    st.stop()
 # ---------------------------
 # إعداد صفحة التطبيق
 # ---------------------------
@@ -77,4 +82,5 @@ if st.button("🔮 تنبؤ"):
     if prediction == 1:
         st.error(f"⚠️ هناك خطر محتمل! (نسبة الخطورة: {prob:.2f}%)")
     else:
+    
         st.success(f"✅ الوضع آمن (نسبة الأمان: {prob:.2f}%)")
