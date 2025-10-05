@@ -1,61 +1,92 @@
 import streamlit as st
-from datetime import datetime, timedelta
+import requests
+from bs4 import BeautifulSoup
 import time
+import random
+from streamlit_extras.switch_page_button import switch_page
 
-flight_data = []
-explosion_predictions = []
+# قائمة User-Agent لتغيير رأس الطلب
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)...",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)...",
+]
 
-def predict_explosion(speed, sensitivity):
-    threshold = 100 - (sensitivity * 10)
-    if speed > threshold:
-        return 5  # ثواني حتى الانفجار (كمثال)
-    else:
+def get_headers():
+    return {'User-Agent': random.choice(USER_AGENTS)}
+
+def fetch_flight_data(account_id):
+    # مثال رابط وهمي لموقع MELBET
+    url = f"https://melbet.com/player/{account_id}/crash"
+    try:
+        response = requests.get(url, headers=get_headers(), timeout=10)
+        if response.status_code == 200:
+            return response.text
+        else:
+            st.warning(f"لم يتم جلب البيانات. رمز الخطأ: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"خطأ في الاتصال بالموقع: {e}")
         return None
 
+def parse_flight_data(html):
+    soup = BeautifulSoup(html, 'html.parser')
+    # مثال مجرد لاستخراج بيانات
+    speed_element = soup.find("div", class_="flight-speed")
+    if speed_element:
+        speed = speed_element.text.strip()
+        return speed
+    return "لا توجد بيانات حاليًا"
+
 def main():
-    st.title('تطبيق ذكي لتتبع انفجارات الطائرة في لعبة كراش')
+    st.set_page_config(page_title="تتبع انفجارات الطائرة في كراش", page_icon="✈️", layout="centered")
+    
+    st.markdown(
+        """
+        <style>
+        .main {background-color: #1e1e2e; color: #f0f0f5;}
+        .block-container {padding: 2rem 5rem 2rem 5rem;}
+        h1 {color: #00bfff;}
+        .stButton>button {background-color: #00bfff; color: white;}
+        .stTextInput>div>div>input {background-color: #2e2e3e; color: white;}
+        </style>
+        """, unsafe_allow_html=True
+    )
+    
+    st.title("✈️ تطبيق تتبع انفجارات الطائرة - لعبة كراش")
 
-    password = st.text_input('أدخل كلمة المرور:', type='password')
-    if password != '1994':
+    password = st.text_input("أدخل كلمة المرور", type='password')
+    if password != "1994":
         if password:
-            st.error('كلمة المرور غير صحيحة، حاول مرة أخرى.')
+            st.error("كلمة المرور غير صحيحة!")
         return
-    else:
-        st.success('تم التحقق من كلمة المرور. أهلاً بك!')
+    
+    st.success("تم التحقق من كلمة المرور!")
 
-    sensitivity = st.slider('إعداد حساسية التنبيهات:', 1, 10, 5)
-    speed = st.number_input('سرعة الطائرة (كم/س):', min_value=0.0, step=0.1)
+    account_id = st.text_input("أدخل رقم الحساب (ID)")
 
-    if st.button('تشغيل التتبع'):
-        explosion_time = predict_explosion(speed, sensitivity)
-        if explosion_time:
-            start_time = datetime.now()
-            end_time = start_time + timedelta(seconds=explosion_time)
-            st.warning(f'تنبيه: الانفجار متوقع خلال {explosion_time} ثانية!')
+    if not account_id:
+        st.warning("يرجى إدخال رقم الحساب.")
+        return
 
-            # عرض عد تنازلي للوقت المتبقي داخل التطبيق
-            placeholder = st.empty()
-            while datetime.now() < end_time:
-                remaining = (end_time - datetime.now()).total_seconds()
-                placeholder.markdown(f"### الوقت المتبقي للسحب: {int(remaining)} ثانية")
-                time.sleep(1)
-            placeholder.markdown("### 💥 الطائرة انفجرت! هل قمت بالسحب؟")
+    start_tracking = st.button("⬆️ بدء التتبع")
+    stop_tracking = st.button("🛑 إيقاف التطبيق")
 
-            explosion_predictions.append({'time': datetime.now(), 'predicted_seconds': explosion_time})
-        else:
-            st.info('لا يوجد انفجار متوقع حالياً.')
+    if start_tracking:
+        st.info("جارٍ تتبع حركة الطائرة - اضغط على إيقاف التطبيق لإغلاق التتبع.")
+        with st.empty() as placeholder:
+            while True:
+                if stop_tracking:
+                    st.warning("تم إيقاف التتبع بناءً على طلبك.")
+                    break
+                
+                html = fetch_flight_data(account_id)
+                if html:
+                    flight_info = parse_flight_data(html)
+                    placeholder.markdown(f"### حركة الطائرة: {flight_info}")
+                else:
+                    placeholder.error("فشل في جلب البيانات.")
 
-        flight_data.append({'time': datetime.now(), 'speed': speed})
+                time.sleep(random.randint(8,15))  # دلّل الحظر بالتوقف العشوائي
 
-    if len(flight_data) > 0:
-        st.subheader('سجل بيانات الجولة')
-        for entry in flight_data[-10:]:
-            st.write(f"الوقت: {entry['time'].strftime('%H:%M:%S')} - السرعة: {entry['speed']} كم/س")
-
-    if len(explosion_predictions) > 0:
-        st.subheader('سجل التنبؤات')
-        for pred in explosion_predictions[-5:]:
-            st.write(f"الوقت: {pred['time'].strftime('%H:%M:%S')} - وقت الانفجار المتوقع: {pred['predicted_seconds']} ثواني")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
