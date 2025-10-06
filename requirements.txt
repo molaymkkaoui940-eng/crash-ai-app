@@ -1,6 +1,8 @@
 streamlit
-scikit-learn
-pandas
-numpy
+requests
 beautifulsoup4
-streamlit-extras
+tensorflow
+scikit-learn
+numpy
+pandas
+pip install -r requirements.txt
