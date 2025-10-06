@@ -1,6 +1,7 @@
 streamlit
 requests
 beautifulsoup4
+tensorflow
 numpy
-tensorflow==2.17.0
+pandas
 scikit-learn
