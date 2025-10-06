@@ -1,8 +1,6 @@
 streamlit
 requests
 beautifulsoup4
-tensorflow
-scikit-learn
 numpy
-pandas
-pip install -r requirements.txt
+scikit-learn
+tensorflow-cpu==2.12.0
