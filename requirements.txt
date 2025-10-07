@@ -3,5 +3,4 @@ requests
 beautifulsoup4
 tensorflow
 numpy
-pandas
 scikit-learn
