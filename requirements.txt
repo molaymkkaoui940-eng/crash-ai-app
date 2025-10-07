@@ -1,14 +1,5 @@
 streamlit
 playwright
-requests
-beautifulsoup4
 numpy
 tensorflow
-keras
 scikit-learn
-pandas
-matplotlib
-markdown-it-py
-mdurl
-pygments
-rich
