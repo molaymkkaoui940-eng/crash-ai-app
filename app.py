@@ -1,202 +1,164 @@
 import streamlit as st
-import requests
-from bs4 import BeautifulSoup
+import asyncio
+from playwright.async_api import async_playwright
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, LSTM, Dense, Dropout, Multiply, Permute, Activation, RepeatVector, Lambda
+from sklearn.preprocessing import MinMaxScaler
+import json
 import time
 import random
-import numpy as np
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
-from sklearn.preprocessing import MinMaxScaler
-import os
-import json
 
-# قائمة رؤوس طلب متنوعة لمحاكاة متصفحات متعددة وأساليب تصفح حقيقية
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Firefox/115.0"
-]
+PASSWORD = "1994"
 
-# أمثلة على بروكسيات يمكن استبدالها أو توسيعها حسب الحاجة
-PROXIES = [
-    "http://51.158.68.68:8811",
-    "http://34.91.135.46:3128",
-    "http://45.77.202.108:8080"
-]
+# آلية انتباه Attention Layer
+def attention_3d_block(inputs):
+    # inputs.shape = (batch_size, time_steps, input_dim)
+    input_dim = int(inputs.shape[2])
+    a = Permute((2, 1))(inputs)
+    a = Dense(time_steps, activation='softmax')(a)
+    a_probs = Permute((2, 1))(a)
+    output_attention_mul = Multiply()([inputs, a_probs])
+    return output_attention_mul
 
-def get_random_proxy():
-    proxy = random.choice(PROXIES)
-    return {'http': proxy, 'https': proxy}
+time_steps = 10  # خطوات الزمنية لبيانات المدخلات
 
-def get_headers():
-    headers = {
-        'User-Agent': random.choice(USER_AGENTS),
-        'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8',
-        'Referer': 'https://melbet.com/',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-    }
-    return headers
+def create_attention_lstm_model(input_shape):
+    inputs = Input(shape=input_shape)
+    lstm_out = LSTM(128, return_sequences=True)(inputs)
+    lstm_out = Dropout(0.3)(lstm_out)
 
-def fetch_html(account_id, use_proxy=True):
-    url = f"https://melbet.com/player/{account_id}/crash"
-    try:
-        proxy = get_random_proxy() if use_proxy else None
-        response = requests.get(url, headers=get_headers(), proxies=proxy, timeout=15)
-        if response.status_code == 200:
-            return response.text
-        else:
-            return None
-    except Exception as e:
-        return None
+    attention_mul = attention_3d_block(lstm_out)
 
-def parse_multiplier(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    elem = soup.find("div", class_="flight-speed")
-    if elem:
-        try:
-            value = elem.text.strip()
-            # تأكد من أن النص رقمي ويمكن تحويله
-            return float(value)
-        except:
-            return None
-    return None
+    lstm_out2 = LSTM(64)(attention_mul)
+    lstm_out2 = Dropout(0.3)(lstm_out2)
 
-def create_lstm_model(input_shape):
-    model = Sequential([
-        LSTM(128, return_sequences=True, input_shape=input_shape),
-        Dropout(0.3),
-        LSTM(64, return_sequences=True),
-        Dropout(0.3),
-        LSTM(32),
-        Dropout(0.3),
-        Dense(50, activation='relu'),
-        Dense(1)
-    ])
+    dense1 = Dense(50, activation='relu')(lstm_out2)
+    outputs = Dense(1)(dense1)
+
+    model = Model(inputs=inputs, outputs=outputs)
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-def prepare_data(data, n_steps=10):
+# تجهيز البيانات
+def prepare_data(data, n_steps=time_steps):
     X, y = [], []
     for i in range(n_steps, len(data)):
-        X.append(data[i-n_steps:i, 0])
-        y.append(data[i, 0])
+        X.append(data[i-n_steps:i])
+        y.append(data[i])
     return np.array(X), np.array(y)
 
-def scale_and_prepare(series, scaler=None):
-    if scaler is None:
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(series)
-    else:
-        scaled_data = scaler.transform(series)
-    return scaled_data, scaler
+# التقاط بيانات WebSocket الحية من 1XBet عبر Playwright
+async def capture_crash_data(account_id, data_container, stop_flag):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        url = f"https://1xbet.com/player/{account_id}/crash"
+        await page.goto(url)
 
-def save_data(data_list):
-    with open("data.json", "w") as f:
-        json.dump(data_list, f)
+        def ws_handler(ws):
+            async def on_message(msg):
+                try:
+                    text = msg['text']
+                    data = json.loads(text)
+                    if "crashPoint" in data:
+                        val = float(data["crashPoint"])
+                        if 0 < val < 100:
+                            data_container.append(val)
+                except:
+                    pass
+            ws.on("framereceived", on_message)
+        
+        page.on("websocket", ws_handler)
 
-def load_data():
-    if os.path.exists("data.json"):
-        with open("data.json", "r") as f:
-            return json.load(f)
-    return []
+        while not stop_flag['stop']:
+            await asyncio.sleep(1)
+        await browser.close()
 
+def run_async_capture(account_id, data_container, stop_flag):
+    asyncio.run(capture_crash_data(account_id, data_container, stop_flag))
+
+# Streamlit interface
 def main():
-    st.set_page_config(page_title="تتبع انفجارات الطائرة - كراش محسّن", page_icon="✈️")
-    st.title("تطبيق تتبع انفجارات الطائرة في لعبة كراش - نسخة متطورة")
+    st.title("تتبع وتوقع انفجارات الطائرة - 1XBET Crash مع تحسينات")
 
-    password = st.text_input("أدخل كلمة المرور", type='password')
-    if password != "1994":
+    password = st.text_input("أدخل كلمة المرور:", type="password")
+    if password != PASSWORD:
         if password:
-            st.error("كلمة المرور غير صحيحة!")
+            st.error("كلمة المرور خاطئة!")
         return
-    st.success("تم التحقق من كلمة المرور!")
 
-    account_id = st.text_input("أدخل رقم الحساب (ID)")
+    account_id = st.text_input("أدخل رقم الحساب (ID):")
     if not account_id:
         st.warning("يرجى إدخال رقم الحساب.")
         return
 
-    start_button = st.button("ابدأ التتبع")
-    stop_button = st.button("أوقف التتبع")
-
     if 'running' not in st.session_state:
         st.session_state.running = False
-    if 'data_list' not in st.session_state:
-        st.session_state.data_list = load_data()
-    if 'model' not in st.session_state:
-        st.session_state.model = None
+    if 'data' not in st.session_state:
+        st.session_state.data = []
     if 'scaler' not in st.session_state:
         st.session_state.scaler = None
+    if 'model' not in st.session_state:
+        st.session_state.model = None
+    if 'stop_flag' not in st.session_state:
+        st.session_state.stop_flag = {'stop': False}
 
-    if start_button:
-        st.session_state.running = True
-    if stop_button:
-        st.session_state.running = False
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("ابدأ التتبع"):
+            st.session_state.running = True
+            st.session_state.stop_flag['stop'] = False
+            st.session_state.data.clear()
+            st.experimental_rerun()
 
-    placeholder_current = st.empty()
-    placeholder_pred = st.empty()
+    with col2:
+        if st.button("أوقف التتبع"):
+            st.session_state.running = False
+            st.session_state.stop_flag['stop'] = True
 
-    n_steps = 10
-    early_stopping = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
+    status_text = st.empty()
+    pred_text = st.empty()
 
-    while st.session_state.running:
-        html = fetch_html(account_id, use_proxy=True)
-        if html:
-            current_mul = parse_multiplier(html)
-            if current_mul is not None:
-                # تجاهل القيم غير المنطقية أو الشاذة لتقوية جودة البيانات
-                if current_mul > 0 and current_mul < 100:
-                    st.session_state.data_list.append(current_mul)
-                    # حفظ البيانات بشكل دوري
-                    save_data(st.session_state.data_list)
-                    placeholder_current.markdown(f"**مضاعف الجولة الحالية:** {current_mul:.2f}x")
+    if st.session_state.running:
+        status_text.text(f"جارِ جمع البيانات... الجولات المسجلة: {len(st.session_state.data)}")
+        
+        # بدء الالتقاط بشكل غير متزامن في الخلفية
+        if 'capture_task' not in st.session_state or st.session_state.capture_task.done():
+            st.session_state.capture_task = asyncio.ensure_future(
+                capture_crash_data(account_id, st.session_state.data, st.session_state.stop_flag)
+            )
 
-                else:
-                    placeholder_current.warning("تم تجاهل قيمة خارجة عن النطاق المتوقع.")
-            else:
-                placeholder_current.error("فشل قراءة بيانات الجولة الحالية.")
-                time.sleep(random.randint(20, 40))
-                continue
-        else:
-            st.error("فشل في جلب الصفحة.")
-            time.sleep(random.randint(20, 40))
-            continue
-
-        if len(st.session_state.data_list) > n_steps:
-            series = np.array(st.session_state.data_list).reshape(-1, 1)
-
+        # بعد جمع بيانات كافية ... تدريب النموذج والتنبؤ
+        if len(st.session_state.data) > time_steps + 5:
+            series = np.array(st.session_state.data).reshape(-1, 1)
             if st.session_state.scaler is None:
-                scaled_data, scaler = scale_and_prepare(series)
+                scaler = MinMaxScaler(feature_range=(0, 1))
+                scaled = scaler.fit_transform(series)
                 st.session_state.scaler = scaler
             else:
-                scaled_data, _ = scale_and_prepare(series, st.session_state.scaler)
+                scaled = st.session_state.scaler.transform(series)
 
-            X, y = prepare_data(scaled_data, n_steps)
+            X, y = prepare_data(scaled.flatten(), time_steps)
             X = X.reshape((X.shape[0], X.shape[1], 1))
 
             if st.session_state.model is None:
-                st.session_state.model = create_lstm_model((X.shape[1], 1))
+                st.session_state.model = create_attention_lstm_model((time_steps, 1))
 
-            st.session_state.model.fit(X, y, epochs=20, batch_size=8, verbose=0, callbacks=[early_stopping])
+            st.session_state.model.fit(X, y, epochs=20, batch_size=16, verbose=0)
 
-            x_input = scaled_data[-n_steps:].reshape(1, n_steps, 1)
+            x_input = scaled[-time_steps:].reshape((1, time_steps, 1))
             pred_scaled = st.session_state.model.predict(x_input, verbose=0)
-            pred = st.session_state.scaler.inverse_transform(pred_scaled)[0][0]
+            pred = st.session_state.scaler.inverse_transform(pred_scaled.reshape(-1, 1))[0][0]
 
-            placeholder_pred.markdown(f"**التوقع لآخر انفجار محتمل:** {pred:.2f}x")
+            pred_text.markdown(f"**التوقع للمضاعف القادم:** {pred:.2f}x")
         else:
-            placeholder_pred.markdown("... جاري جمع بيانات كافية للتدريب")
+            pred_text.text("... جارٍ جمع بيانات كافية للتنبؤ (10 جولات على الأقل)")
 
-        # تأخير عشوائي بين 15 إلى 60 ثانية لمحاكاة استخدام بشري
-        time.sleep(random.randint(15, 60))
-
-    if not st.session_state.running:
-        st.info("تم إيقاف التتبع.")
-
+    else:
+        status_text.text("تم إيقاف التتبع.")
+        pred_text.text("")
 
 if __name__ == "__main__":
     main()
