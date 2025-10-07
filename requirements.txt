@@ -1,6 +1,2 @@
-streamlit
-requests
-beautifulsoup4
-tensorflow
-numpy
-scikit-learn
+pip install streamlit playwright tensorflow numpy scikit-learn
+playwright install
