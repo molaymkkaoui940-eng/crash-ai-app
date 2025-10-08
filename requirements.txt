@@ -1,5 +1,7 @@
 streamlit
 playwright
 numpy
-tensorflow
+pandas
 scikit-learn
+tensorflow==2.15.0
+websockets
