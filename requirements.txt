@@ -2,7 +2,7 @@ streamlit
 numpy
 pandas
 scikit-learn
-tensorflow==2.15.0
+tensorflow==2.15; python_version < "3.12"
 websockets
 requests
 beautifulsoup4
